@@ -11,11 +11,6 @@ import (
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/oci"
 
-	//
-	//fcctrd "github.com/ckatsak/fc-ctrd"
-	//_ "github.com/ckatsak/fc-ctrd"
-	//_ "github.com/firecracker-microvm/firecracker-containerd"
-	//_ "github.com/firecracker-microvm/firecracker-containerd"
 	fcclient "github.com/firecracker-microvm/firecracker-containerd/firecracker-control/client"
 	"github.com/firecracker-microvm/firecracker-containerd/proto"
 	"github.com/firecracker-microvm/firecracker-containerd/runtime/firecrackeroci"
@@ -33,12 +28,18 @@ const (
 	vmID = "testclient01-01"
 )
 
-var logger *logrus.Logger
+var (
+	log *logrus.Entry
+)
 
 func init() {
-	logger = logrus.New() //.WithFields(logrus.Fields{ /* TODO */ })
-	logger.SetLevel(logrus.TraceLevel)
-	logger.SetFormatter(&logrus.TextFormatter{
+	log = logrus.New().WithFields(logrus.Fields{
+		"namespace": defaultNamespace,
+		"vmID":      vmID,
+		"imageName": imageName,
+	})
+	log.Logger.SetLevel(logrus.TraceLevel)
+	log.Logger.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp:          true,
 		DisableLevelTruncation: true,
 	})
@@ -49,13 +50,15 @@ func init() {
 // Also see:
 // - https://github.com/estesp/examplectr/blob/master/examplectr.go
 func getImage(ctx context.Context, c *containerd.Client, imageName string) (image containerd.Image, err error) {
+	log := log.WithField("func", "getImage()")
+
 	if image, err = c.GetImage(ctx, imageName); err == nil {
-		logger.Infof("Image '%s' found through (*containerd.Client).GetImage()", imageName)
+		log.Infof("Image found through (*containerd.Client).GetImage()")
 		return
 	}
 
 	// if the image isn't already in our namespaced context, then pull it
-	logger.Infof("Pulling image '%s'", imageName)
+	log.WithError(err).Infof("Pulling image")
 	if image, err = c.Pull(
 		ctx,
 		imageName,
@@ -63,23 +66,26 @@ func getImage(ctx context.Context, c *containerd.Client, imageName string) (imag
 		containerd.WithPullSnapshotter(snapshotter),
 	); err != nil {
 		err = fmt.Errorf("failed to (*containerd.Client).Pull('%s'): %v", imageName, err)
+		log.WithError(err).Warn()
 	}
 	return
 }
 
 func main() {
+	log := log.WithField("func", "main()")
+
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Create containerd client
-	logger.Infof("Creating new containerd client...")
+	log.Infof("Creating new containerd client...")
 	client, err := containerd.New(defaultContainerdAddress)
 	if err != nil {
-		logger.Errorf("error creating containerd client: %v", err)
+		log.WithError(err).Errorf("error creating containerd client")
 		return
 	}
 	defer func() {
-		logger.Infof("Closing containerd client...")
+		log.Infof("Closing containerd client...")
 		if err := client.Close(); err != nil {
-			logger.Warnf("error closing containerd client: %v", err)
+			log.WithError(err).Warnf("error closing containerd client")
 		}
 	}()
 
@@ -89,55 +95,55 @@ func main() {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Version info for containerd.Client
 	if v, err := client.Version(ctx); err != nil {
-		logger.Errorf("failed to get containerd's version information: %v", err)
+		log.WithError(err).Errorf("failed to get containerd's version information")
 		return
 	} else {
-		logger.Infof("(*containerd.Client).Version() returned %#v", v)
+		log.Infof("(*containerd.Client).Version() returned %#v", v)
 	}
-	logger.Infof("(*containerd.Client).Runtime() returned '%s'", client.Runtime())
+	log.Infof("(*containerd.Client).Runtime() returned '%s'", client.Runtime())
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Random containerd.Client test... FIXME(ckatsak): to be removed
-	logger.Debugf("Random testing for containerd client...")
+	log.Debugf("Random testing for containerd client...")
 	cst, err := client.ContentStore().ListStatuses(ctx)
 	if err != nil {
-		logger.Errorf("ContentStore().ListStatuses() failed: %v", err)
+		log.WithError(err).Errorf("ContentStore().ListStatuses() failed")
 		return
 	}
-	logger.Debugf("%#v", cst)
+	log.Debugf("%#v", cst)
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Bit more relevant containerd.Client test... FIXME(ckatsak): to be removed
-	logger.Debugf("Bit-more-relevant-but-still-random testing for containerd client...")
+	log.Debugf("Bit-more-relevant-but-still-random testing for containerd client...")
 	images, err := client.ImageService().List(ctx)
 	if err != nil {
-		logger.Errorf("client.ImageService().List() failed: %v", err)
+		log.WithError(err).Errorf("client.ImageService().List() failed")
 		return
 	}
-	logger.Debugf("images = %#v", images)
+	log.Debugf("images = %#v", images)
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Create firecracker-containerd fc-control client
-	logger.Infof("Creating new firecracker-containerd client...")
+	log.Infof("Creating new firecracker-containerd client...")
 	fcClient, err := fcclient.New(defaultContainerdTTRPCAddress)
 	if err != nil {
-		logger.Errorf("fcclient.New() failed: %v", err)
+		log.WithError(err).Errorf("fcclient.New() failed")
 		return
 	}
 	defer func() {
-		logger.Infof("Closing firecracker-containerd client...")
+		log.Infof("Closing firecracker-containerd client...")
 		if err := fcClient.Close(); err != nil {
-			logger.Warnf("error closing firecracker-control client: %v", err)
+			log.WithError(err).Warnf("error closing firecracker-control client")
 		}
 	}()
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Create new uVM
-	logger.Infof("Creating new uVM (VMID: %s)...", vmID)
+	log.Infof("Creating new uVM...")
 	req := &proto.CreateVMRequest{
 		VMID:           vmID,
 		TimeoutSeconds: 20, // XXX(ckatsak): Optional
@@ -157,32 +163,31 @@ func main() {
 	}
 	resp, err := fcClient.CreateVM(ctx, req)
 	if err != nil {
-		logger.Errorf("error creating new VM: %v", err)
+		log.WithError(err).Errorf("error creating new VM")
 		return
 	}
-	//_ = resp
 	defer func() {
-		logger.Infof("Stopping uVM '%s'...", vmID)
+		log.Infof("Stopping uVM...")
 		if _, err := fcClient.StopVM(ctx, &proto.StopVMRequest{VMID: vmID}); err != nil {
-			logger.Warnf("failed to StopVM('%s'): %v", vmID, err)
+			log.WithError(err).Warnf("failed to StopVM()")
 		}
 	}()
-	logger.Debugf("fcClient.CreateVM() responded: %#v", resp)
+	log.Debugf("fcClient.CreateVM() responded: %#v", resp)
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Fetch the container image to be deployed inside the uVM
-	logger.Infof("Fetching the container image...")
+	log.Infof("Fetching the container image...")
 	image, err := getImage(ctx, client, imageName)
 	if err != nil {
-		logger.Errorf("failed to getImage(): %v", err)
+		log.WithError(err).Errorf("failed to getImage()")
 		return
 	}
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Create the new container to run inside the uVM
-	logger.Infof("Creating the new container...")
+	log.Infof("Creating the new container...")
 	container, err := client.NewContainer(
 		ctx,
 		vmID,
@@ -196,58 +201,58 @@ func main() {
 		containerd.WithRuntime("aws.firecracker", nil),
 	)
 	if err != nil {
-		logger.Errorf("failed to create NewContainer('%s'): %v", vmID, err)
+		log.WithError(err).Errorf("failed to create NewContainer()")
 		return
 	}
 	defer func() {
-		logger.Infof("Deleting container '%s'...", container.ID())
+		log.Infof("Deleting container '%s'...", container.ID())
 		if err := container.Delete(ctx, containerd.WithSnapshotCleanup); err != nil {
-			logger.Warnf("failed to delete container '%s' with snapshot-cleanup: %v", container.ID(), err)
+			log.WithError(err).Warnf("failed to delete container '%s' with snapshot-cleanup", container.ID())
 		}
 	}()
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Create a new task from the container we just defined, to run inside the uVM
-	logger.Infof("Creating the new task...")
+	log.Infof("Creating the new task...")
 	task, err := container.NewTask(ctx, cio.NewCreator(cio.WithStdio))
 	if err != nil {
-		logger.Errorf("failed to create new task: %v", err)
+		log.WithError(err).Errorf("failed to create new task")
 		return
 	}
 	defer func() {
-		logger.Infof("Deleting task...")
+		log.Infof("Deleting task...")
 		exitStatus, err := task.Delete(ctx)
 		if err != nil {
-			logger.Warnf("failed to delete task: %v", err)
+			log.WithError(err).Warnf("failed to delete task")
 		}
-		logger.Infof("Deleted task's exit status: %#v", exitStatus)
+		log.Infof("Deleted task's exit status: %#v", exitStatus)
 	}()
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Create a channel to wait for the task to complete before exiting
-	logger.Infof("Creating the new task's exit channel...")
+	log.Infof("Creating the new task's exit channel...")
 	esCh, err := task.Wait(ctx)
 	if err != nil {
-		logger.Errorf("failed to (*containerd.Task).Wait(): %v", err)
+		log.WithError(err).Errorf("failed to (*containerd.Task).Wait()")
 		return
 	}
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Start the task
-	logger.Infof("Starting the new task...")
+	log.Infof("Starting the new task...")
 	if err = task.Start(ctx); err != nil {
-		logger.Errorf("failed to start the new Task: %v", err)
+		log.WithError(err).Errorf("failed to start the new Task")
 		return
 	}
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Wait for the task to complete before exiting
-	logger.Infof("Waiting for the task to complete...")
+	log.Infof("Waiting for the task to complete...")
 	es := <-esCh
-	logger.Infof("Task completed with exit status: %#v", es)
+	log.Infof("Task completed with exit status: %#v", es)
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 }
