@@ -7,6 +7,7 @@ go 1.19
 require (
 	github.com/containerd/containerd v1.6.8
 	github.com/firecracker-microvm/firecracker-containerd v0.0.0-20221013004016-e1775743b08b
+	github.com/sirupsen/logrus v1.9.0
 )
 
 require (
@@ -33,7 +34,6 @@ require (
 	github.com/opencontainers/runtime-spec v1.0.3-0.20210910115017-0d6cc581aeea // indirect
 	github.com/opencontainers/selinux v1.10.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/sirupsen/logrus v1.9.0 // indirect
 	go.opencensus.io v0.23.0 // indirect
 	golang.org/x/net v0.0.0-20221014081412-f15817d10f9b // indirect
 	golang.org/x/sync v0.0.0-20220929204114-8fcdb60fdcc0 // indirect
