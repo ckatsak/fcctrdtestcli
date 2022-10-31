@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/sirupsen/logrus"
 
@@ -45,21 +46,71 @@ func init() {
 	})
 }
 
+type Client struct {
+	cc  *containerd.Client
+	fcc *fcclient.Client
+}
+
+func NewClient(containerdAddress, containerdTTRPCAddress string) (ret *Client, err error) {
+	log := log.WithField("func", "NewClient()")
+
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Create containerd client
+	log.Infof("Creating new containerd client...")
+	client, err := containerd.New(containerdAddress)
+	if err != nil {
+		log.WithError(err).Errorf("error creating containerd client")
+		return
+	}
+	defer func() {
+		if err != nil {
+			log.Infof("Closing containerd client...")
+			if err := client.Close(); err != nil {
+				log.WithError(err).Warnf("error closing containerd client")
+			}
+		}
+	}()
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Create firecracker-containerd fc-control client
+	log.Infof("Creating new firecracker-containerd client...")
+	fcClient, err := fcclient.New(containerdTTRPCAddress)
+	if err != nil {
+		log.WithError(err).Errorf("fcclient.New() failed")
+		return
+	}
+	defer func() {
+		if err != nil {
+			log.Infof("Closing firecracker-containerd client...")
+			if err := fcClient.Close(); err != nil {
+				log.WithError(err).Warnf("error closing firecracker-control client")
+			}
+		}
+	}()
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	return &Client{
+		cc:  client,
+		fcc: fcClient,
+	}, nil
+}
+
 // getImage returns the containerd.Image associated with the provided image name.
 //
 // Also see:
 // - https://github.com/estesp/examplectr/blob/master/examplectr.go
-func getImage(ctx context.Context, c *containerd.Client, imageName string) (image containerd.Image, err error) {
-	log := log.WithField("func", "getImage()")
+func (c *Client) getImage(ctx context.Context, imageName string) (image containerd.Image, err error) {
+	log := log.WithField("func", "(*Client).getImage()")
 
-	if image, err = c.GetImage(ctx, imageName); err == nil {
+	if image, err = c.cc.GetImage(ctx, imageName); err == nil {
 		log.Infof("Image found through (*containerd.Client).GetImage()")
 		return
 	}
 
 	// if the image isn't already in our namespaced context, then pull it
 	log.WithError(err).Infof("Pulling image")
-	if image, err = c.Pull(
+	if image, err = c.cc.Pull(
 		ctx,
 		imageName,
 		containerd.WithPullUnpack,
@@ -71,74 +122,39 @@ func getImage(ctx context.Context, c *containerd.Client, imageName string) (imag
 	return
 }
 
-func main() {
-	log := log.WithField("func", "main()")
+// vanilla simply creates a new VM and an interactive container inside it.
+//
+// This should work with vanilla firecracker-containerd (commit `e177574`).
+func vanilla() {
+	log := log.WithField("func", "vanilla")
+	ctx := namespaces.WithNamespace(context.Background(), defaultNamespace)
 
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Create containerd client
-	log.Infof("Creating new containerd client...")
-	client, err := containerd.New(defaultContainerdAddress)
+	c, err := NewClient(defaultContainerdAddress, defaultContainerdTTRPCAddress)
 	if err != nil {
-		log.WithError(err).Errorf("error creating containerd client")
+		log.WithError(err).Errorf("failed to create client")
 		return
 	}
-	defer func() {
-		log.Infof("Closing containerd client...")
-		if err := client.Close(); err != nil {
-			log.WithError(err).Warnf("error closing containerd client")
-		}
-	}()
-
-	ctx := namespaces.WithNamespace(context.Background(), defaultNamespace)
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Version info for containerd.Client
-	if v, err := client.Version(ctx); err != nil {
+	if v, err := c.cc.Version(ctx); err != nil {
 		log.WithError(err).Errorf("failed to get containerd's version information")
 		return
 	} else {
 		log.Infof("(*containerd.Client).Version() returned %#v", v)
 	}
-	log.Infof("(*containerd.Client).Runtime() returned '%s'", client.Runtime())
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Random containerd.Client test... FIXME(ckatsak): to be removed
-	log.Debugf("Random testing for containerd client...")
-	cst, err := client.ContentStore().ListStatuses(ctx)
-	if err != nil {
-		log.WithError(err).Errorf("ContentStore().ListStatuses() failed")
-		return
-	}
-	log.Debugf("%#v", cst)
+	log.Infof("(*containerd.Client).Runtime() returned '%s'", c.cc.Runtime())
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Bit more relevant containerd.Client test... FIXME(ckatsak): to be removed
 	log.Debugf("Bit-more-relevant-but-still-random testing for containerd client...")
-	images, err := client.ImageService().List(ctx)
+	images, err := c.cc.ImageService().List(ctx)
 	if err != nil {
 		log.WithError(err).Errorf("client.ImageService().List() failed")
 		return
 	}
 	log.Debugf("images = %#v", images)
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Create firecracker-containerd fc-control client
-	log.Infof("Creating new firecracker-containerd client...")
-	fcClient, err := fcclient.New(defaultContainerdTTRPCAddress)
-	if err != nil {
-		log.WithError(err).Errorf("fcclient.New() failed")
-		return
-	}
-	defer func() {
-		log.Infof("Closing firecracker-containerd client...")
-		if err := fcClient.Close(); err != nil {
-			log.WithError(err).Warnf("error closing firecracker-control client")
-		}
-	}()
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -161,14 +177,14 @@ func main() {
 		ContainerCount:           1,
 		ExitAfterAllTasksDeleted: true,
 	}
-	resp, err := fcClient.CreateVM(ctx, req)
+	resp, err := c.fcc.CreateVM(ctx, req)
 	if err != nil {
 		log.WithError(err).Errorf("error creating new VM")
 		return
 	}
 	defer func() {
 		log.Infof("Stopping uVM...")
-		if _, err := fcClient.StopVM(ctx, &proto.StopVMRequest{VMID: vmID}); err != nil {
+		if _, err := c.fcc.StopVM(ctx, &proto.StopVMRequest{VMID: vmID}); err != nil {
 			log.WithError(err).Warnf("failed to StopVM()")
 		}
 	}()
@@ -178,7 +194,7 @@ func main() {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Fetch the container image to be deployed inside the uVM
 	log.Infof("Fetching the container image...")
-	image, err := getImage(ctx, client, imageName)
+	image, err := c.getImage(ctx, imageName)
 	if err != nil {
 		log.WithError(err).Errorf("failed to getImage()")
 		return
@@ -188,7 +204,7 @@ func main() {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Create the new container to run inside the uVM
 	log.Infof("Creating the new container...")
-	container, err := client.NewContainer(
+	container, err := c.cc.NewContainer(
 		ctx,
 		vmID,
 		containerd.WithSnapshotter(snapshotter),
@@ -255,4 +271,22 @@ func main() {
 	es := <-esCh
 	log.Infof("Task completed with exit status: %#v", es)
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+}
+
+func createSnapshot() {
+	panic("TODO(ckatsak): UNIMLPEMENTED")
+}
+
+func main() {
+	switch len(os.Args) {
+	case 2:
+		switch os.Args[1] {
+		case "snap":
+			createSnapshot()
+		case "vanilla":
+			vanilla()
+		}
+	default:
+		vanilla()
+	}
 }
