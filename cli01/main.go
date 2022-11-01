@@ -103,6 +103,17 @@ func NewClient(containerdAddress, containerdTTRPCAddress string) (ret *Client, e
 	}, nil
 }
 
+func (c *Client) Close() {
+	log := log.WithField("func", "(*Client).Close()")
+
+	if err := c.fcc.Close(); err != nil {
+		log.WithError(err).Warnf("failed to close firecracker-control client")
+	}
+	if err := c.cc.Close(); err != nil {
+		log.WithError(err).Warnf("failed to close containerd client")
+	}
+}
+
 // getImage returns the containerd.Image associated with the provided image name.
 //
 // Also see:
@@ -148,6 +159,7 @@ func vanilla(imageName string) {
 		log.WithError(err).Errorf("failed to create client")
 		return
 	}
+	defer c.Close()
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Version info for containerd.Client
@@ -304,6 +316,7 @@ func createSnapshot(imageName string) {
 		log.WithError(err).Errorf("failed to create client")
 		return
 	}
+	defer c.Close()
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Version info for containerd.Client
