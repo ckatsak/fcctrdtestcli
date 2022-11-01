@@ -27,7 +27,8 @@ const (
 
 	snapshotter = "devmapper"
 
-	imageName = "docker.io/library/debian:bullseye"
+	debianImageName = "docker.io/library/debian:bullseye"
+	nginxImageName  = "docker.io/library/nginx:latest"
 
 	vmID = "testclient01-01"
 
@@ -44,7 +45,6 @@ func init() {
 	log = logrus.New().WithFields(logrus.Fields{
 		"namespace": defaultNamespace,
 		"vmID":      vmID,
-		"imageName": imageName,
 	})
 	log.Logger.SetLevel(logrus.TraceLevel)
 	log.Logger.SetFormatter(&logrus.TextFormatter{
@@ -135,8 +135,12 @@ func (c *Client) getImage(ctx context.Context, imageName string) (image containe
 // vanilla simply creates a new VM and an interactive container inside it.
 //
 // This should work with vanilla firecracker-containerd (commit `e177574`).
-func vanilla() {
-	log := log.WithField("func", "vanilla")
+func vanilla(imageName string) {
+	log := log.WithFields(logrus.Fields{
+		"func":  "vanilla",
+		"image": imageName,
+	})
+
 	ctx := namespaces.WithNamespace(context.Background(), defaultNamespace)
 
 	c, err := NewClient(defaultContainerdAddress, defaultContainerdTTRPCAddress)
@@ -284,10 +288,15 @@ func vanilla() {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 }
 
-func createSnapshot() {
-	var err error
+func createSnapshot(imageName string) {
+	var (
+		err error
+		log = log.WithFields(logrus.Fields{
+			"func":  "createSnapshot()",
+			"image": imageName,
+		})
+	)
 
-	log := log.WithField("func", "createSnapshot()")
 	ctx := namespaces.WithNamespace(context.Background(), defaultNamespace)
 
 	c, err := NewClient(defaultContainerdAddress, defaultContainerdTTRPCAddress)
@@ -382,7 +391,7 @@ func createSnapshot() {
 	// Create a new task from the container we just defined, to run inside the uVM
 	log.Infof("Creating the new task...")
 	var task containerd.Task
-	task, err = container.NewTask(ctx, cio.NewCreator(cio.WithStdio))
+	task, err = container.NewTask(ctx, cio.NullIO)
 	if err != nil {
 		log.WithError(err).Errorf("failed to create new task")
 		return
@@ -483,14 +492,21 @@ func createSnapshot() {
 
 func main() {
 	switch len(os.Args) {
+	case 3:
+		switch os.Args[1] {
+		case "snap":
+			createSnapshot(os.Args[2])
+		case "vanilla":
+			vanilla(os.Args[2])
+		}
 	case 2:
 		switch os.Args[1] {
 		case "snap":
-			createSnapshot()
+			createSnapshot(nginxImageName)
 		case "vanilla":
-			vanilla()
+			vanilla(debianImageName)
 		}
 	default:
-		vanilla()
+		vanilla(debianImageName)
 	}
 }
