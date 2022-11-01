@@ -46,4 +46,6 @@ require (
 
 replace github.com/firecracker-microvm/firecracker-containerd => /local/christos/src/snaplace/firecracker-containerd
 
-//replace github.com/firecracker-microvm/firecracker-containerd => /local/christos/src/snaplace/firecracker-containerd
+// Downgrading genproto is needed to fix "panic: protobuf tag not enough fields in Status.state:"
+//  (stolen from: https://github.com/containerd/ttrpc/pull/89/files)
+replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20200224152610-e50cd9704f63
