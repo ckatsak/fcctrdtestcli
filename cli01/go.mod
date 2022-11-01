@@ -1,4 +1,4 @@
-module github.com/ckatsak/testclient01
+module github.com/ckatsak/fcctrdtestcli/cli01
 
 go 1.19
 
