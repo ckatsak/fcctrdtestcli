@@ -35,6 +35,8 @@ const (
 	defaultSnapshotDirname       = "/tmp/snap-testclient01"
 	defaultSnapshotStateFileExt  = "state"
 	defaultSnapshotMemoryFileExt = "memory"
+
+	defaultResumeAfterLoad = true
 )
 
 var (
@@ -210,7 +212,7 @@ func vanilla(imageName string) {
 	}
 	defer func() {
 		log.Infof("Stopping uVM...")
-		if _, err := c.fcc.StopVM(ctx, &proto.StopVMRequest{VMID: vmID}); err != nil {
+		if _, err := c.fcc.StopVM(ctx, &proto.StopVMRequest{VMID: vmID, TimeoutSeconds: 5}); err != nil {
 			log.WithError(err).Warnf("failed to StopVM()")
 		}
 	}()
@@ -356,7 +358,7 @@ func createSnapshot(imageName string) {
 	}
 	defer func() {
 		log.Infof("Stopping uVM...")
-		if _, err := c.fcc.StopVM(ctx, &proto.StopVMRequest{VMID: vmID}); err != nil {
+		if _, err := c.fcc.StopVM(ctx, &proto.StopVMRequest{VMID: vmID, TimeoutSeconds: 5}); err != nil {
 			log.WithError(err).Warnf("failed to StopVM() on deferred call")
 		}
 	}()
@@ -503,17 +505,94 @@ func createSnapshot(imageName string) {
 	// Return, allowing the deferred calls to attempt to resume the uVM and cleanup the task and the container
 }
 
+func loadSnapshot(snapshotDirPath string, alsoResume bool) {
+	var (
+		err error
+		log = log.WithFields(logrus.Fields{
+			"func": "loadSnapshot()",
+		})
+	)
+
+	ctx := namespaces.WithNamespace(context.Background(), defaultNamespace)
+
+	c, err := NewClient(defaultContainerdAddress, defaultContainerdTTRPCAddress)
+	if err != nil {
+		log.WithError(err).Errorf("failed to create client")
+		return
+	}
+	defer c.Close()
+
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Version info for containerd.Client
+	if v, err := c.cc.Version(ctx); err != nil {
+		log.WithError(err).Errorf("failed to get containerd's version information")
+		return
+	} else {
+		log.Infof("(*containerd.Client).Version() returned %#v", v)
+	}
+	log.Infof("(*containerd.Client).Runtime() returned '%s'", c.cc.Runtime())
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Load uVM from the snapshot
+	log.Infof("Loading uVM from snapshot...")
+	loadReq := &proto.LoadVMSnapshotRequest{
+		VMID:         vmID,
+		SnapshotPath: filepath.Join(snapshotDirPath, fmt.Sprintf("%s.%s", vmID, defaultSnapshotStateFileExt)),
+		MemFilePath:  filepath.Join(snapshotDirPath, fmt.Sprintf("%s.%s", vmID, defaultSnapshotMemoryFileExt)),
+		ResumeVM:     alsoResume,
+	}
+	if _, err = c.fcc.LoadVMSnapshot(ctx, loadReq); err != nil {
+		log.WithError(err).Errorf("failed to load uVM from the snapshot")
+		return
+	}
+	defer func() {
+		if _, err = c.fcc.StopVM(ctx, &proto.StopVMRequest{VMID: vmID, TimeoutSeconds: 5}); err != nil {
+			log.WithError(err).Warnf("failed to stop uVM")
+		}
+	}()
+	log.Infof("uVM loaded from snapshot successfully!")
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	log.Infof("Sleeping for 20 seconds for you to play...")
+	time.Sleep(20 * time.Second)
+
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//// Resume the uVM
+	if !alsoResume {
+		log.Infof("Resuming the uVM...")
+		if _, err = c.fcc.ResumeVM(ctx, &proto.ResumeVMRequest{VMID: vmID}); err != nil {
+			log.WithError(err).Errorf("failed to resume the uVM")
+			return
+		}
+		log.Infof("uVM resumed successfully!")
+	}
+	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	log.Infof("Sleeping for 20 seconds for you to play...")
+	time.Sleep(20 * time.Second)
+
+	// Return, allowing the deferred calls to attempt to resume the uVM and cleanup the task and the container
+}
+
 func main() {
 	switch len(os.Args) {
 	case 3:
 		switch os.Args[1] {
+		case "load":
+			// <cli> <command> <snapshot_dir_path>
+			loadSnapshot(os.Args[2], defaultResumeAfterLoad)
 		case "snap":
+			// <cli> <command> <image>
 			createSnapshot(os.Args[2])
 		case "vanilla":
+			// <cli> <command> <image>
 			vanilla(os.Args[2])
 		}
 	case 2:
+		// <cli> <command>
 		switch os.Args[1] {
+		case "load":
+			loadSnapshot(defaultSnapshotDirname, defaultResumeAfterLoad)
 		case "snap":
 			createSnapshot(nginxImageName)
 		case "vanilla":
