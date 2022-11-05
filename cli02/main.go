@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	defaultNamespace              = "default"
+	defaultNamespace              = namespaces.Default
 	defaultContainerdAddress      = "/run/firecracker-containerd/containerd.sock"
 	defaultContainerdTTRPCAddress = defaultContainerdAddress + ".ttrpc"
 
@@ -30,7 +30,8 @@ const (
 
 	nginxImageName = "docker.io/library/nginx:latest"
 
-	vmID = "testclient02-01"
+	vmID       = "testclient02-01"
+	kernelArgs = "i8042.nokbd i8042.noaux 8250.nr_uarts=0 ipv6.disable=1 noapic reboot=k panic=1 pci=off nomodules ro systemd.unified_cgroup_hierarchy=0 systemd.journald.forward_to_console systemd.unit=firecracker.target init=/sbin/overlay-init"
 
 	defaultSnapshotDirname       = "/tmp/snapshots"
 	defaultSnapshotStateFileExt  = "state"
@@ -65,6 +66,7 @@ func init() {
 	})
 	log.Logger.SetLevel(logrus.TraceLevel)
 	log.Logger.SetFormatter(&logrus.TextFormatter{
+		TimestampFormat:        time.RFC3339Nano,
 		FullTimestamp:          true,
 		DisableLevelTruncation: true,
 	})
@@ -194,6 +196,7 @@ func createSnapshot(imageName string) {
 		VMID:                     vmID,
 		TimeoutSeconds:           30,
 		NetworkInterfaces:        []*proto.FirecrackerNetworkInterface{defaultNetworkInterface},
+		KernelArgs:               kernelArgs,
 		ContainerCount:           1,
 		ExitAfterAllTasksDeleted: true,
 	}
