@@ -1,0 +1,16 @@
+[package]
+name = "cli05"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+protobuf = "3"
+#async-trait = "0.1"
+#tokio = { version = "1", features = ["full"] }
+#ttrpc = { version = "0.7", features = ["async"] }
+
+[build-dependencies]
+ttrpc-codegen = "0.4"
+#protoc-rust = "2.28"
