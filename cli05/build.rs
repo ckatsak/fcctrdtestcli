@@ -8,7 +8,7 @@ const OUT_DIR: &str = "src/fc_ctrd";
 
 fn main() {
     let protobuf_customized = ProtobufCustomize::default()
-        .gen_mod_rs(true)
+        .gen_mod_rs(false)
         //.tokio_bytes(true)
         //.tokio_bytes_for_string(true)
         //.generate_accessors(true)
@@ -17,12 +17,16 @@ fn main() {
     Codegen::new()
         .out_dir(OUT_DIR)
         .inputs([
+            // firecracker-containerd:
             "proto/events.proto",
             "proto/firecracker.proto",
             "proto/types.proto",
             "proto/service/drivemount/drivemount.proto",
             "proto/service/fccontrol/fccontrol.proto",
             "proto/service/ioproxy/ioproxy.proto",
+            // well-known types (dependencies):
+            "proto/google/protobuf/any.proto",
+            "proto/google/protobuf/empty.proto",
         ])
         .includes(["proto/"])
         .rust_protobuf()
