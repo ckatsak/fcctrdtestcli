@@ -10,7 +10,9 @@ use containerd_client::{
         container::Runtime,
         containers_client::ContainersClient,
         images_client::ImagesClient,
-        snapshots::{snapshots_client::SnapshotsClient, PrepareSnapshotRequest},
+        snapshots::{
+            snapshots_client::SnapshotsClient, PrepareSnapshotRequest, RemoveSnapshotRequest,
+        },
         tasks_client::TasksClient,
         version_client::VersionClient,
         Container, CreateContainerRequest, CreateTaskRequest, DeleteContainerRequest,
@@ -417,51 +419,75 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Kill the task
+    // Attempt to kill the task
     info!("Killing the task...");
     let kill_task_req = KillRequest {
         container_id: container.id.clone(),
         signal: 9, // SIGKILL
         ..Default::default()
     };
-    c.tasks
+    match c
+        .tasks
         .kill(with_namespace!(kill_task_req, conf::NAMESPACE))
         .await
-        .with_context(|| "failed to kill task")? // FIXME: Do not exit on error?
-        // (firecracker-containerd should be removing the container after the task has been killed,
-        // but we should do that manually if kill fails
-        .into_inner();
-    info!("Task has been killed successfully!");
+    {
+        Ok(_unit_resp) => info!("Task has been killed successfully!"),
+        Err(err) => warn!("Failed to kill task: {err}"),
+    };
+    //.into_inner();
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Delete the task
+    // Attempt to delete the task
     // TODO(ckatsak): This should probably be some kind of guard?
+    info!("Deleting the task...");
     let del_task_req = DeleteTaskRequest {
         container_id: container.id.clone(),
     };
-    let del_task_resp = c
+    match c
         .tasks
         .delete(with_namespace!(del_task_req, conf::NAMESPACE))
         .await
-        .with_context(|| "failed to delete task")? // FIXME: Do not exit on error?
-        .into_inner();
-    debug!("firecracker-containerd responded: {del_task_resp:?}");
-    info!("Container has been deleted successfully!");
+    {
+        Ok(del_task_resp) => {
+            let del_task_resp = del_task_resp.into_inner();
+            debug!("firecracker-containerd responded: {del_task_resp:?}");
+            info!("Container has been deleted successfully!");
+        }
+        Err(err) => warn!("Failed to delete task: {err}"),
+    };
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Delete the container
+    // Attempt to delete the container
     // TODO(ckatsak): This should probably be some kind of guard?
     info!("Deleting container '{}'...", container.id);
     let del_ctr_req = DeleteContainerRequest { id: container.id };
-    let del_ctr_resp = c
+    match c
         .containers
         .delete(with_namespace!(del_ctr_req, conf::NAMESPACE))
         .await
-        .with_context(|| "failed to delete the container")?; // FIXME: Do not exit on error?
-    debug!("firecracker-containerd responded: {del_ctr_resp:?}");
-    info!("Container has been deleted successfully!");
+    {
+        Ok(_unit_resp) => info!("Container has been deleted successfully!"),
+        Err(err) => warn!("Failed to delete container: {err}"),
+    };
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Attempt to delete the containerd snapshot associated with the deleted container
+    info!("Removing associated container snapshot...");
+    let rm_snap_req = RemoveSnapshotRequest {
+        snapshotter: conf::SNAPSHOTTER.into(),
+        key: format!("{}-snap", conf::VMID),
+    };
+    match c
+        .snapshots
+        .remove(with_namespace!(rm_snap_req, conf::NAMESPACE))
+        .await
+    {
+        Ok(_unit_resp) => info!("Associated containerd snapshot has been removed successfully!"),
+        Err(err) => warn!("Failed to remove associated containerd snapshot: {err}"),
+    };
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -473,12 +499,11 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
         TimeoutSeconds: conf::SERVER_SIDE_TIMEOUT_SEC,
         ..Default::default()
     };
-    let _ = c
-        .fcc
-        .stop_vm(ctx, &stop_req)
-        .await
-        .with_context(|| "failed to stop VM")?;
-    info!("VM has been stopped successfully!");
+    match c.fcc.stop_vm(ctx, &stop_req).await {
+        Ok(_unit_resp) => info!("VM has been stopped successfully!"),
+        Err(err) => warn!("Failed to stop VM: {err}"),
+    };
+
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     Ok(())
