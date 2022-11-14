@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -329,6 +330,19 @@ func createSnapshot(imageName string) {
 	}()
 	log.Tracef("workload's response: %#v", workloadResp)
 	log.Infof("Latency when creating a new VM: %v", tEnd)
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Print out container's OCI runtime spec
+	if spec, err := container.Spec(ctx); err != nil {
+		log.WithError(err).Warnf("failed to retrieve container's OCI runtime spec")
+	} else {
+		if marshalledSpec, err := json.MarshalIndent(spec, "", "    "); err != nil {
+			log.WithError(err).Warnf("failed to JSON-marshal container's OCI runtime spec")
+		} else {
+			log.Tracef("New container's OCI runtime spec:\n%s", marshalledSpec)
+		}
+	}
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
