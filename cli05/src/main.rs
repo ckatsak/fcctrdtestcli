@@ -26,13 +26,14 @@ use tokio::{
     time::{timeout, timeout_at, Instant},
 };
 use tonic::{transport::Channel, Request};
-use tracing::{debug, info, instrument, trace, warn, Level};
+use tracing::{debug, error, info, instrument, trace, warn, Level};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 use ttrpc::{asynchronous::Client as TtrpcClient, context};
 
 use fc_ctrd::fccontrol_ttrpc::FirecrackerClient;
 use fc_ctrd::firecracker::{
-    CreateVMRequest, CreateVMSnapshotRequest, PauseVMRequest, ResumeVMRequest, StopVMRequest,
+    CreateVMRequest, CreateVMSnapshotRequest, LoadVMSnapshotRequest, PauseVMRequest,
+    ResumeVMRequest, StopVMRequest,
 };
 
 /// Command-line client to create or load VM snapshots.
@@ -334,7 +335,7 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
         hresp
             .text()
             .await
-            .with_context(|| "failed to render HTTP response body as text")?
+            .with_context(|| "failed to get the full HTTP response text")?
     );
     let t_end_2 = Instant::now();
     info!(
@@ -385,7 +386,7 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
         ),
         ..Default::default()
     };
-    let _ = c
+    let _empty_resp = c
         .fcc
         .create_vm_snapshot(ctx.clone(), &create_snap_req)
         .await
@@ -399,22 +400,22 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
         VMID: conf::VMID.into(),
         ..Default::default()
     };
-    let _ = c
+    let _empty_resp = c
         .fcc
         .resume_vm(ctx.clone(), &resume_req)
         .await
-        .with_context(|| "failed to resume the VM");
+        .with_context(|| "failed to resume the VM")?;
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Make sure the VM is still functional after resuming it
     match timeout(Duration::from_millis(500), http.get(conf::NGINX_URL).send()).await {
         Ok(Ok(_)) => info!("The function looks functional after resuming the VM!"),
-        Ok(Err(er)) => warn!("Function looks dysfunctional after resuming the VM: {}", er),
-        Err(timeout_err) => warn!("Function timed out after resuming the VM: {}", timeout_err),
+        Ok(Err(err)) => warn!("Error returned after resuming the VM: {err}"),
+        Err(timeout_err) => warn!("Request timed out after resuming the VM: {timeout_err}"),
     };
 
-    info!("Sleeping for 10 seconds before creating the snapshot for you to play...");
+    info!("Sleeping for 10 seconds before tearing down everything, for you to play...");
     tokio::time::sleep(Duration::from_secs(10)).await;
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -434,7 +435,6 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
         Ok(_unit_resp) => info!("Task has been killed successfully!"),
         Err(err) => warn!("Failed to kill task: {err}"),
     };
-    //.into_inner();
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -452,7 +452,7 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
         Ok(del_task_resp) => {
             let del_task_resp = del_task_resp.into_inner();
             debug!("firecracker-containerd responded: {del_task_resp:?}");
-            info!("Container has been deleted successfully!");
+            info!("Task has been deleted successfully!");
         }
         Err(err) => warn!("Failed to delete task: {err}"),
     };
@@ -461,6 +461,12 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Attempt to delete the container
     // TODO(ckatsak): This should probably be some kind of guard?
+    // NOTE(ckatsak): To restore a sound firecracker-containerd from a VM snapshot, the container's
+    // (containerd-)snapshot must be already present. However, it looks like deleting the container
+    // automatically marks container's active (containerd-)snapshot for garbage-collection, and it
+    // ends up being removed. Therefore, given our current firecracker-containerd implementation,
+    // for VM snapshots' loading to work correctly, we should refrain from deleting the container
+    // (and its associated (containerd-)snapshot).
     info!("Deleting container '{}'...", container.id);
     let del_ctr_req = DeleteContainerRequest { id: container.id };
     match c
@@ -468,25 +474,31 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
         .delete(with_namespace!(del_ctr_req, conf::NAMESPACE))
         .await
     {
-        Ok(_unit_resp) => info!("Container has been deleted successfully!"),
+        Ok(_unit_resp) => {
+            info!("Container has been deleted successfully!");
+            ///////////////////////////////////////////////////////////////////////////////////////
+            // Attempt to delete the containerd snapshot associated with the deleted container
+            // NOTE(ckatsak): It looks like we do not really need to explicitly remove container's
+            // (containerd-)snapshot: deleting the container marks its associated snapshot as
+            // eligible for garbage-collection, so it is soon deleted anwyay.
+            info!("Removing associated containerd snapshot...");
+            let rm_snap_req = RemoveSnapshotRequest {
+                snapshotter: conf::SNAPSHOTTER.into(),
+                key: format!("{}-snap", conf::VMID),
+            };
+            match c
+                .snapshots
+                .remove(with_namespace!(rm_snap_req, conf::NAMESPACE))
+                .await
+            {
+                Ok(_unit_resp) => {
+                    info!("Associated containerd snapshot has been removed successfully!")
+                }
+                Err(err) => warn!("Failed to remove associated containerd snapshot: {err}"),
+            };
+            ///////////////////////////////////////////////////////////////////////////////////////
+        }
         Err(err) => warn!("Failed to delete container: {err}"),
-    };
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Attempt to delete the containerd snapshot associated with the deleted container
-    info!("Removing associated container snapshot...");
-    let rm_snap_req = RemoveSnapshotRequest {
-        snapshotter: conf::SNAPSHOTTER.into(),
-        key: format!("{}-snap", conf::VMID),
-    };
-    match c
-        .snapshots
-        .remove(with_namespace!(rm_snap_req, conf::NAMESPACE))
-        .await
-    {
-        Ok(_unit_resp) => info!("Associated containerd snapshot has been removed successfully!"),
-        Err(err) => warn!("Failed to remove associated containerd snapshot: {err}"),
     };
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -500,10 +512,9 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
         ..Default::default()
     };
     match c.fcc.stop_vm(ctx, &stop_req).await {
-        Ok(_unit_resp) => info!("VM has been stopped successfully!"),
-        Err(err) => warn!("Failed to stop VM: {err}"),
+        Ok(_empty_resp) => info!("VM has been stopped successfully!"),
+        Err(err) => error!("Failed to stop VM: {err}"),
     };
-
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
     Ok(())
@@ -511,7 +522,105 @@ async fn create_snapshot(args: SnapArgs) -> Result<()> {
 
 #[instrument(level = Level::TRACE)]
 async fn load_snapshot(args: LoadArgs) -> Result<()> {
-    debug!("load_snapshot");
+    let mut c = Client::new()
+        .await
+        .with_context(|| "failed to create new Client")?;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Version info for containerd
+    let (version, revision) = c.version().await?;
+    info!("containerd {{ version: {version}, revision: {revision} }})");
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+
+    let t_start = Instant::now();
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Create TTRPC context to use across all calls
+    //let ctx = TtrpcContext { // use ttrpc::context::Context as TtrpcContext
+    //    metadata: [(
+    //        conf::TTRPC_HEADER_NAMESPACE_KEY.into(),
+    //        vec![conf::NAMESPACE.into()],
+    //    )]
+    //    .into(),
+    //    timeout_nano: conf::CLIENT_SIDE_TIMEOUT_NANOSEC, // 6 sec
+    //};
+    let mut ctx = context::with_timeout(conf::CLIENT_SIDE_TIMEOUT_NANOSEC); // 6 sec
+    ctx.add(
+        conf::TTRPC_HEADER_NAMESPACE_KEY.to_string(),
+        conf::NAMESPACE.into(),
+    );
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Load VM from the snapshot
+    let load_req = LoadVMSnapshotRequest {
+        VMID: conf::VMID.into(),
+        SnapshotPath: format!(
+            "{}/{}.{}",
+            args.dir_path.display(),
+            conf::VMID,
+            conf::SNAPSHOT_STATE_FILE_EXT
+        ),
+        MemFilePath: format!(
+            "{}/{}.{}",
+            args.dir_path.display(),
+            conf::VMID,
+            conf::SNAPSHOT_MEMORY_FILE_EXT
+        ),
+        ResumeVM: true,
+        ..Default::default()
+    };
+    let _empty_resp = c
+        .fcc
+        .load_vm_snapshot(ctx.clone(), &load_req)
+        .await
+        .with_context(|| "failed to load VM from snapshot")?;
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // HTTP GET
+    let http = reqwest::Client::new();
+    let hresp = match timeout(Duration::from_millis(500), http.get(conf::NGINX_URL).send()).await {
+        Ok(Ok(resp)) => Ok(resp),
+        Ok(Err(err)) => Err(anyhow!("error returned: {err}")),
+        Err(timeout_err) => Err(anyhow!("request timed out: {timeout_err}")),
+    }
+    .with_context(|| "failed HTTP GET to the function inside the VM")?;
+    let t_end_1 = Instant::now();
+    debug!("workload responded with {}", hresp.status());
+    trace!(
+        "workload's response body:\n{}",
+        hresp
+            .text()
+            .await
+            .with_context(|| "failed to get the full HTTP response text")?
+    );
+    let t_end_2 = Instant::now();
+    info!(
+        "Workload's response latency when loading a VM from a snapshot: {} (or maybe just {})",
+        humantime::format_duration(t_end_2 - t_start),
+        humantime::format_duration(t_end_1 - t_start),
+    );
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+
+    info!("Sleeping for 10 seconds after hydrating the snapshot for you to play...");
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Stop the VM
+    // TODO(ckatsak): This should probably be some kind of guard?
+    info!("Stopping the VM...");
+    let stop_req = StopVMRequest {
+        VMID: conf::VMID.into(),
+        TimeoutSeconds: conf::SERVER_SIDE_TIMEOUT_SEC,
+        ..Default::default()
+    };
+    match c.fcc.stop_vm(ctx, &stop_req).await {
+        Ok(_empty_resp) => info!("VM has been stopped successfully!"),
+        Err(err) => error!("Failed to stop VM: {err}"),
+    };
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
 
     Ok(())
 }
