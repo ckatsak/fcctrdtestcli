@@ -1,0 +1,13 @@
+{
+  "docker.io/ckatsak/snaplace-fbpml-chameleon:0.0.1-dev": "sha256:9a88041f65d50687e41ff9272123afa7aa390ed3313e58f1cc9a57b1e8de0e96",
+  "docker.io/ckatsak/snaplace-fbpml-cnn_serving:0.0.1-dev": "sha256:f229c1fa2d1abb05917bf5a26779346939b0f3e33b14e4e84abeca63af131962",
+  "docker.io/ckatsak/snaplace-fbpml-helloworld:0.0.1-dev": "sha256:e0f520ac84cc1418f3f39b6b1c40801baba961762806f25caf756289e745de7b",
+  "docker.io/ckatsak/snaplace-fbpml-image_rotate:0.0.1-dev": "sha256:7b55e01dab6049ac243d0000a83de3443fe3d1b8ffd8c0265165c311aa140413",
+  "docker.io/ckatsak/snaplace-fbpml-json_serdes:0.0.1-dev": "sha256:a162d6fafe5f6938a5624070aa5886643ed1fc19aba56ca51c410a6f13f6d13d",
+  "docker.io/ckatsak/snaplace-fbpml-lr_serving:0.0.1-dev": "sha256:82c93956a6a1a1cae0e7edefdd2f1787031a2ecc74d8121d90c6eb0ea75b3c75",
+  "docker.io/ckatsak/snaplace-fbpml-lr_training:0.0.1-dev": "sha256:dd607391c8e8e1fcd3faaf0a09874fde8b46ae6bd6d875cf11cbbf5513f90609",
+  "docker.io/ckatsak/snaplace-fbpml-matmul_fb:0.0.1-dev": "sha256:251159c8ef11ee4599e791627c42bb8662a653fc974be4d534856a6b87be0946",
+  "docker.io/ckatsak/snaplace-fbpml-pyaes:0.0.1-dev": "sha256:702f75e8bfb11641edb68a92e8c59c0a25c803c6201cfb70b896ec06b1232f7b",
+  "docker.io/ckatsak/snaplace-fbpml-rnn_serving:0.0.1-dev": "sha256:ff48acd1f87454f2718497d3edcf7c3140635560fbde4d1ad8dda174bbdf56cc",
+  "docker.io/ckatsak/snaplace-fbpml-video_processing:0.0.1-dev": "sha256:c30e6152181b0cb396fdd18c5b7e198a373e532d67ddfb0143c1d78b9087dab6"
+}
