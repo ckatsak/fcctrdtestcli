@@ -34,6 +34,8 @@ const (
 
 	imagePrefix = "docker.io/ckatsak/snaplace-fbpml-"
 	imageTag    = "0.0.1-dev"
+
+	nginxImageName = "docker.io/library/nginx@sha256:943c25b4b66b332184d5ba6bb18234273551593016c0e0ae906bab111548239f"
 )
 
 var (
@@ -295,9 +297,6 @@ func (c *Client) parent(ctx context.Context, bench, fullImageRef string) (parent
 }
 
 func (c *Client) play(ctx context.Context) {
-	const (
-		nginxImageName = "docker.io/library/nginx:1.23.2"
-	)
 	var (
 		err error
 		log = log.WithFields(logrus.Fields{
@@ -384,7 +383,13 @@ func main() {
 	log.Infof("(*containerd.Client).Runtime() returned '%s'", c.cc.Runtime())
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	//c.play(ctx)
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Uncomment these to test the `parent` method with the nginx image and then exit:
+	////c.play(ctx)
+	//parent := c.parent(ctx, "nginx", nginxImageName)
+	//log.Infof("'%s' is the parent of '%s'", parent, nginxImageName)
+	//return
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	parents := make(map[string]string)
 	for _, bench := range []string{
