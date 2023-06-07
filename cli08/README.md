@@ -1,5 +1,14 @@
 # cli08
 
+## Compatibility
+
+Tested commits in ckatsak/fc-ctrd:
+
+- `c7c391f` (branch `uvm-snaps`)
+- `45b0305` (branch `uvm-snaps`)
+- `93478bd` (branch `uvm-snaps`)
+- not sure about "dirty" branches that preceded `uvm-snaps`
+
 ## Build
 
 ### `containerd-client`
